@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}BP Category Calculator{% endblock %}
+
+{% block content %}
+<h4>BP Category Calculator</h4>
+<hr />
+<div class="row">
+    <div class="col-md-4">
+        <form method="post" id="form1">
+            {{ form.csrf_token }}
+            <div class="text-danger {{ 'validation-summary-errors' if form.form_errors else 'validation-summary-valid' }}">
+                <ul>{% for message in form.form_errors %}<li>{{ message }}</li>{% endfor %}</ul>
+            </div>
+            <div class="form-group">
+                {{ form.systolic.label(class="control-label") }}
+                {{ form.systolic(class="form-control") }}
+                <span class="text-danger" data-valmsg-for="{{ form.systolic.name }}" data-valmsg-replace="true">{{ form.systolic.errors[0] if form.systolic.errors }}</span>
+            </div>
+            <div class="form-group">
+                {{ form.diastolic.label(class="control-label") }}
+                {{ form.diastolic(class="form-control") }}
+                <span class="text-danger" data-valmsg-for="{{ form.diastolic.name }}" data-valmsg-replace="true">{{ form.diastolic.errors[0] if form.diastolic.errors }}</span>
+            </div>
+            <div class="form-group">
+                <input type="submit" value="Submit" class="btn btn-default" />
+            </div>
+            {% if bp %}
+                <div class="form-group">
+                    {{ bp.category.value }}
+                </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+    {% include "_validation_scripts.html" %}
+{% endblock %}

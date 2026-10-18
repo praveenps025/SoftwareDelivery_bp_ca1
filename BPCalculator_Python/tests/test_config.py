@@ -2,7 +2,6 @@ import pytest
 
 from config import Config, DevelopmentConfig, TestingConfig, get_config
 
-
 # --- choosing the configuration ---
 
 def test_production_config_by_name():

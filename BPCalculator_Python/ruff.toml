@@ -1,0 +1,19 @@
+# Code analysis settings (run: ruff check .)
+line-length = 100
+target-version = "py313"
+extend-exclude = [".venv"]
+
+[lint]
+select = [
+    "E", "W",   # pycodestyle errors and warnings
+    "F",        # pyflakes: unused imports, undefined names
+    "I",        # import sorting
+    "B",        # bugbear: likely bugs
+    "S",        # bandit security rules
+    "SIM",      # simplifications
+    "UP",       # modern Python syntax
+    "RUF",      # ruff-specific checks
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["S101"]   # pytest uses plain assert statements

@@ -1,0 +1,163 @@
+name: CI - BP Calculator
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+  # also called by deploy.yml, so master runs exactly the same checks
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  APP_DIR: BPCalculator_Python
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  unit-tests:
+    name: Unit tests and coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # fails if any test fails or coverage drops below 80%
+      - name: Run tests with coverage
+        run: >
+          pytest -v
+          --cov=. --cov-fail-under=80
+          --cov-report=term --cov-report=xml --cov-report=html
+          --junitxml=test-results.xml
+
+      - name: Add coverage to run summary
+        if: always()
+        run: |
+          echo "## Code coverage" >> "$GITHUB_STEP_SUMMARY"
+          python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-and-coverage-reports
+          path: |
+            ${{ env.APP_DIR }}/test-results.xml
+            ${{ env.APP_DIR }}/coverage.xml
+            ${{ env.APP_DIR }}/htmlcov/
+
+  code-analysis:
+    name: Code analysis (Ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # rules are in ruff.toml; github format shows issues inline on the PR
+      - name: Ruff
+        run: ruff check --output-format=github .
+
+  security-scan:
+    name: Security scan (Bandit, pip-audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # static security analysis of the app code; fails on medium or high severity
+      - name: Bandit
+        run: bandit -r . -x ./tests,./.venv --severity-level medium
+
+      # known vulnerabilities in the production dependencies
+      - name: pip-audit
+        run: pip-audit -r requirements.txt
+
+  docker-checks:
+    name: Docker lint, smoke test and image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pinned to a commit so a moved tag cannot change what runs (v3.5.0)
+      - name: Hadolint
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387
+        with:
+          dockerfile: ${{ env.APP_DIR }}/Dockerfile
+          failure-threshold: error
+
+      - name: Build image
+        run: docker build -t bpcalc:ci ${{ env.APP_DIR }}
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name bpcalc -p 5000:5000 bpcalc:ci
+          for i in $(seq 1 15); do
+            curl -fs http://localhost:5000/ > /dev/null && break
+            sleep 2
+          done
+          curl -fsS http://localhost:5000/ | grep -q "Ideal Blood Pressure"
+          curl -fsS -o /dev/null http://localhost:5000/Privacy
+          echo "Container is up and serving pages"
+
+      - name: Container logs
+        if: failure()
+        run: docker logs bpcalc
+
+      # pinned to a commit (v0.36.0, released after the March 2026 tag compromise)
+      - name: Trivy scan report (HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: bpcalc:ci
+          severity: HIGH,CRITICAL
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+
+      # gate: fail only on CRITICAL vulnerabilities that already have a fix
+      - name: Trivy gate (fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: bpcalc:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt

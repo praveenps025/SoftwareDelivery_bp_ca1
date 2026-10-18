@@ -1,7 +1,6 @@
 import pytest
 
 from app import create_app
-from bloodpressure import BPCategory
 
 
 def post(client, systolic, diastolic):

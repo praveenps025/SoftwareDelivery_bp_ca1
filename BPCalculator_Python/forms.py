@@ -12,7 +12,7 @@ def _bp_field(label, minimum, maximum, error_message):
     required_message = f"The {label} field is required."
     return IntegerField(
         label,
-        name=f"BP.{label}",                 # same field names Razor generated (asp-for="BP.Systolic")
+        name=f"BP.{label}",     # same field names Razor generated (asp-for="BP.Systolic")
         id=f"BP_{label}",
         validators=[
             InputRequired(message=required_message),

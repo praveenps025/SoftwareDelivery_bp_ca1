@@ -1,0 +1,5 @@
+# measure the application code only, not the tests
+[run]
+omit =
+    tests/*
+    .venv/*

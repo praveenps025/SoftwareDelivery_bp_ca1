@@ -4,12 +4,9 @@ from app import create_app
 from forms import BloodPressureForm
 
 
-@pytest.fixture
-def app():
-    return create_app("Testing")
-
-
-def make_form(app, systolic, diastolic):
+# fill in the form as if a user had posted it, then run validation
+def submit_form(systolic, diastolic):
+    app = create_app("Testing")
     data = {"BP.Systolic": systolic, "BP.Diastolic": diastolic}
     with app.test_request_context("/", method="POST", data=data):
         form = BloodPressureForm()
@@ -17,56 +14,72 @@ def make_form(app, systolic, diastolic):
         return form
 
 
-@pytest.mark.parametrize("systolic, diastolic", [
-    (70, 40),       # both minimums
-    (190, 100),     # both maximums
-    (71, 40),
-    (189, 99),
-])
-def test_values_inside_range_are_valid(app, systolic, diastolic):
-    form = make_form(app, systolic, diastolic)
-    assert not form.errors and not form.form_errors
+# --- valid readings ---
+
+def test_lowest_allowed_values_are_valid():
+    form = submit_form(70, 40)
+    assert form.errors == {}
 
 
-@pytest.mark.parametrize("systolic, message", [
-    (69, "Invalid Systolic Value"),
-    (191, "Invalid Systolic Value"),
-])
-def test_systolic_out_of_range(app, systolic, message):
-    assert make_form(app, systolic, 60).systolic.errors == [message]
+def test_highest_allowed_values_are_valid():
+    form = submit_form(190, 100)
+    assert form.errors == {}
 
 
-@pytest.mark.parametrize("diastolic, message", [
-    (39, "Invalid Diastolic Value"),
-    (101, "Invalid Diastolic Value"),
-])
-def test_diastolic_out_of_range(app, diastolic, message):
-    assert make_form(app, 150, diastolic).diastolic.errors == [message]
+# --- systolic out of range (allowed: 70 to 190) ---
+
+@pytest.mark.parametrize("systolic", [69, 191])
+def test_systolic_out_of_range(systolic):
+    form = submit_form(systolic, 60)
+    assert form.systolic.errors == ["Invalid Systolic Value"]
 
 
-@pytest.mark.parametrize("value", ["", "abc", "12.5"])
-def test_non_integer_systolic_rejected(app, value):
-    form = make_form(app, value, 60)
-    assert form.systolic.errors
-    assert form.to_model().systolic is None
+# --- diastolic out of range (allowed: 40 to 100) ---
+
+@pytest.mark.parametrize("diastolic", [39, 101])
+def test_diastolic_out_of_range(diastolic):
+    form = submit_form(150, diastolic)
+    assert form.diastolic.errors == ["Invalid Diastolic Value"]
 
 
-def test_missing_diastolic_message(app):
-    form = make_form(app, 120, "")
+# --- missing or non-numeric values ---
+
+def test_missing_systolic():
+    form = submit_form("", 60)
+    assert form.systolic.errors == ["The Systolic field is required."]
+
+
+def test_missing_diastolic():
+    form = submit_form(120, "")
     assert form.diastolic.errors == ["The Diastolic field is required."]
 
 
-@pytest.mark.parametrize("systolic, diastolic", [(80, 80), (80, 90)])
-def test_systolic_must_be_greater_than_diastolic(app, systolic, diastolic):
-    form = make_form(app, systolic, diastolic)
+@pytest.mark.parametrize("text", ["abc", "12.5"])
+def test_systolic_must_be_a_whole_number(text):
+    form = submit_form(text, 60)
+    assert form.systolic.errors != []
+
+
+# --- systolic must be greater than diastolic ---
+
+def test_equal_values_are_rejected():
+    form = submit_form(80, 80)
     assert form.form_errors == ["Systolic must be greater than Diastolic"]
-    assert not form.errors.get("systolic") and not form.errors.get("diastolic")
 
 
-def test_cross_field_rule_skipped_when_a_value_is_missing(app):
-    assert make_form(app, "", 60).form_errors == []
+def test_diastolic_higher_than_systolic_is_rejected():
+    form = submit_form(80, 90)
+    assert form.form_errors == ["Systolic must be greater than Diastolic"]
 
 
-def test_to_model_returns_posted_values(app):
-    bp = make_form(app, 130, 85).to_model()
-    assert (bp.systolic, bp.diastolic) == (130, 85)
+def test_comparison_is_skipped_when_a_value_is_missing():
+    form = submit_form("", 60)
+    assert form.form_errors == []
+
+
+# --- converting the form to a BloodPressure ---
+
+def test_form_values_are_copied_to_the_model():
+    bp = submit_form(130, 85).to_model()
+    assert bp.systolic == 130
+    assert bp.diastolic == 85

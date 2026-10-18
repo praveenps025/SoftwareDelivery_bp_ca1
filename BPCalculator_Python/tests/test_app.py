@@ -1,3 +1,5 @@
+import pytest
+
 from app import create_app
 from bloodpressure import BPCategory
 
@@ -71,3 +73,27 @@ def test_unhandled_exception_shows_error_page_in_production():
     assert response.status_code == 500
     assert "An error occurred while processing your request." in response.get_data(as_text=True)
 
+
+
+@pytest.mark.parametrize("systolic, diastolic, expected", [
+    (85, 55, BPCategory.LOW),
+    (110, 70, BPCategory.IDEAL),
+    (125, 82, BPCategory.PRE_HIGH),
+    (145, 92, BPCategory.HIGH),
+])
+def test_post_shows_each_category(client, systolic, diastolic, expected):
+    assert expected.value in post(client, systolic, diastolic).get_data(as_text=True)
+
+
+def test_error_page_echoes_request_id_header(client):
+    html = client.get("/Error", headers={"X-Request-ID": "abc-123"}).get_data(as_text=True)
+    assert "abc-123" in html
+
+
+def test_routes_are_case_sensitive(client):
+    assert client.get("/privacy").status_code == 404
+    assert client.get("/error").status_code == 404
+
+
+def test_unknown_route_returns_404(client):
+    assert client.get("/does-not-exist").status_code == 404

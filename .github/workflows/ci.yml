@@ -34,9 +34,10 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       # fails if any test fails or coverage drops below 80%
+      # (BDD scenarios run in their own job below)
       - name: Run tests with coverage
         run: >
-          pytest -v
+          pytest -v --ignore=tests/test_bdd.py
           --cov=. --cov-fail-under=80
           --cov-report=term --cov-report=xml --cov-report=html
           --junitxml=test-results.xml
@@ -56,6 +57,35 @@ jobs:
             ${{ env.APP_DIR }}/test-results.xml
             ${{ env.APP_DIR }}/coverage.xml
             ${{ env.APP_DIR }}/htmlcov/
+
+  bdd-tests:
+    name: BDD tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ env.APP_DIR }}/requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Gherkin scenarios in tests/features/, steps in tests/test_bdd.py
+      - name: Run BDD scenarios
+        run: pytest -v tests/test_bdd.py --junitxml=bdd-results.xml
+
+      - name: Upload BDD results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bdd-results
+          path: ${{ env.APP_DIR }}/bdd-results.xml
 
   code-analysis:
     name: Code analysis (Ruff)

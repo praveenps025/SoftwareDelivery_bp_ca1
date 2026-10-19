@@ -51,6 +51,13 @@ def create_app(env_name=None):
             return url_for("static", filename=filename, v=digest)
         return {"static_v": static_v}
 
+    # commit SHA baked into the image at build time; the deploy health check uses it
+    # to tell when the new version is live (not in the .NET app, see MIGRATION.md F7)
+    @app.after_request
+    def add_version_header(response):
+        response.headers["X-App-Version"] = os.environ.get("APP_VERSION", "dev")
+        return response
+
     return app
 
 

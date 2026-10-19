@@ -76,6 +76,21 @@ jobs:
         id: health
         run: bash .github/scripts/health-check.sh "${{ steps.deploy.outputs.webapp-url }}" "${{ github.sha }}"
 
+      # keep the version this deploy replaces as "previous", so a manual rollback can go back to it
+      # (skipped when re-deploying the version that is already stable)
+      - name: Keep current stable version as previous
+        run: |
+          if ! docker pull -q ${{ env.IMAGE_NAME }}:stable; then
+            echo "No stable image yet, nothing to keep"
+            exit 0
+          fi
+          current=$(docker image inspect ${{ env.IMAGE_NAME }}:stable \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^APP_VERSION=//p')
+          if [ -n "$current" ] && [ "$current" != "${{ github.sha }}" ]; then
+            docker buildx imagetools create -t ${{ env.IMAGE_NAME }}:previous ${{ env.IMAGE_NAME }}:$current
+            echo "Previous version is now $current"
+          fi
+
       # the "stable" tag always points at the last version that passed the live health check
       - name: Mark this version as stable
         run: docker buildx imagetools create -t ${{ env.IMAGE_NAME }}:stable ${{ env.IMAGE_NAME }}:${{ github.sha }}

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Full commit SHA to deploy (leave empty for the last stable version)"
+        description: "Full commit SHA to deploy (leave empty for the version before the current one)"
         required: false
         default: ""
 
@@ -42,8 +42,11 @@ jobs:
           REQUESTED: ${{ inputs.version }}
         run: |
           if [ -z "$REQUESTED" ]; then
-            docker pull -q "$IMAGE_NAME:stable"
-            version=$(docker image inspect "$IMAGE_NAME:stable" \
+            if ! docker pull -q "$IMAGE_NAME:previous"; then
+              echo "::error::No previous version yet, enter a commit SHA instead"
+              exit 1
+            fi
+            version=$(docker image inspect "$IMAGE_NAME:previous" \
               --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^APP_VERSION=//p')
           elif [[ "$REQUESTED" =~ ^[0-9a-f]{40}$ ]]; then
             docker buildx imagetools inspect "$IMAGE_NAME:$REQUESTED" > /dev/null
@@ -74,3 +77,8 @@ jobs:
             echo "## Manual rollback"
             echo "Production is now running \`${{ steps.target.outputs.version }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # the rolled-back version is live and healthy, so it becomes the stable one;
+      # otherwise the next deploy would keep the bad version as "previous"
+      - name: Mark this version as stable
+        run: docker buildx imagetools create -t "$IMAGE_NAME:stable" "$IMAGE_NAME:${{ steps.target.outputs.version }}"

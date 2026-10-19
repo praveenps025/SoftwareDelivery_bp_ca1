@@ -39,6 +39,7 @@ The original .NET project is **unchanged** and still in `../BPCalculator`, so bo
 | F4 | Unhandled errors | Not logged by the template | Logged with stack trace and request id (`app.py:37-38`) | Small improvement. `_logger` was injected in C# but never used. |
 | F5 | HTML5 attributes on inputs | `type="number"` + `data-val-*` | Same, **plus** `min`, `max`, `required` | WTForms adds them automatically. jQuery Validation sets `novalidate` on the form, so users still see the same messages. |
 | F6 | Anti-forgery field name | `__RequestVerificationToken` | `csrf_token` | Framework naming. A POST without a valid token still gets **HTTP 400** in both. |
+| F7 | Version header | None | Every response has `X-App-Version` (commit SHA from the `APP_VERSION` env var, `dev` locally) (`app.py:54-59`) | The deploy pipeline uses it to confirm which version is live before marking it stable or after a rollback. |
 
 Everything else (URLs, form field names/ids, validation rules and messages, page markup, CSS, JS) was kept the same on purpose. Existing UI tests that use `id="BP_Systolic"` or `name="BP.Systolic"` will still work.
 
@@ -199,6 +200,7 @@ For production, `waitress-serve --call app:create_app` calls the same factory, j
 | 44 | `app.UseAuthorization();` | — | — | **Removed**: no authorization was configured, so it did nothing |
 | 46-49 | `endpoints.MapRazorPages();` | 41-42 | `app.register_blueprint(pages)` | Routes registered from `pages.py` |
 | (`_Layout.cshtml:46` `asp-append-version="true"`) | Tag helper appends `?v=<hash>` | 44-52 | `static_v()` context processor | Same cache-busting behaviour |
+| — | — | 54-59 | `after_request` adds `X-App-Version` | **New** (F7) |
 
 ```csharp
 // OLD  Startup.cs:29-50

@@ -5,6 +5,11 @@ on:
     branches: [master]
   workflow_dispatch:
 
+# one production deploy or rollback at a time (shared with rollback.yml)
+concurrency:
+  group: production
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: praveenps025/bpcalc
   AZURE_WEBAPP_NAME: ca1
@@ -37,6 +42,8 @@ jobs:
           # plain single-platform manifest; avoids attestation entries App Service can't pull
           provenance: false
           sbom: false
+          # served as the X-App-Version header, so the health check knows which version is live
+          build-args: APP_VERSION=${{ github.sha }}
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -48,6 +55,13 @@ jobs:
       name: production
       url: ${{ steps.deploy.outputs.webapp-url }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Deploy to Azure Web App
         id: deploy
         uses: azure/webapps-deploy@v3
@@ -56,3 +70,45 @@ jobs:
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           # the commit-SHA tag makes App Service pull exactly the image just built
           images: index.docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # waits for the new version to be live, then checks the pages
+      - name: Health check
+        id: health
+        run: bash .github/scripts/health-check.sh "${{ steps.deploy.outputs.webapp-url }}" "${{ github.sha }}"
+
+      # the "stable" tag always points at the last version that passed the live health check
+      - name: Mark this version as stable
+        run: docker buildx imagetools create -t ${{ env.IMAGE_NAME }}:stable ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # ---- automatic rollback: only if the deploy or the health check failed ----
+
+      - name: Find last stable version
+        id: stable
+        if: failure() && (steps.deploy.outcome == 'failure' || steps.health.outcome == 'failure')
+        run: |
+          if ! docker pull -q ${{ env.IMAGE_NAME }}:stable; then
+            echo "::error::No stable image yet, nothing to roll back to"
+            exit 1
+          fi
+          version=$(docker image inspect ${{ env.IMAGE_NAME }}:stable \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^APP_VERSION=//p')
+          echo "Rolling back to $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Roll back to stable version
+        id: rollback
+        if: failure() && steps.stable.outcome == 'success'
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: index.docker.io/${{ env.IMAGE_NAME }}:${{ steps.stable.outputs.version }}
+
+      - name: Health check after rollback
+        if: failure() && steps.rollback.outcome == 'success'
+        run: |
+          bash .github/scripts/health-check.sh "${{ steps.rollback.outputs.webapp-url }}" "${{ steps.stable.outputs.version }}"
+          {
+            echo "## Deployment rolled back"
+            echo "Version \`${{ github.sha }}\` failed, so production was rolled back to the last stable version \`${{ steps.stable.outputs.version }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

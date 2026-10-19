@@ -1,0 +1,76 @@
+name: Rollback - BP Calculator
+
+# manual rollback: Actions tab -> "Rollback - BP Calculator" -> Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Full commit SHA to deploy (leave empty for the last stable version)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# never runs at the same time as a deploy (shared with deploy.yml)
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: praveenps025/bpcalc
+  AZURE_WEBAPP_NAME: ca1
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # input is passed through env, never pasted into the script, to avoid injection
+      - name: Choose version
+        id: target
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -z "$REQUESTED" ]; then
+            docker pull -q "$IMAGE_NAME:stable"
+            version=$(docker image inspect "$IMAGE_NAME:stable" \
+              --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -n 's/^APP_VERSION=//p')
+          elif [[ "$REQUESTED" =~ ^[0-9a-f]{40}$ ]]; then
+            docker buildx imagetools inspect "$IMAGE_NAME:$REQUESTED" > /dev/null
+            version="$REQUESTED"
+          else
+            echo "::error::Version must be a full 40-character commit SHA"
+            exit 1
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::Could not find a version to roll back to"
+            exit 1
+          fi
+          echo "Rolling back to $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy chosen version
+        id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: index.docker.io/${{ env.IMAGE_NAME }}:${{ steps.target.outputs.version }}
+
+      - name: Health check
+        run: |
+          bash .github/scripts/health-check.sh "${{ steps.deploy.outputs.webapp-url }}" "${{ steps.target.outputs.version }}"
+          {
+            echo "## Manual rollback"
+            echo "Production is now running \`${{ steps.target.outputs.version }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

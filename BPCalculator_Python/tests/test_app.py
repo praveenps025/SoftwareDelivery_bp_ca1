@@ -73,6 +73,16 @@ def test_unhandled_exception_shows_error_page_in_production():
     assert "An error occurred while processing your request." in response.get_data(as_text=True)
 
 
+def test_version_header_defaults_to_dev(client, monkeypatch):
+    monkeypatch.delenv("APP_VERSION", raising=False)
+    assert client.get("/").headers["X-App-Version"] == "dev"
+
+
+def test_version_header_shows_build_version(client, monkeypatch):
+    monkeypatch.setenv("APP_VERSION", "abc123")
+    assert client.get("/Privacy").headers["X-App-Version"] == "abc123"
+
+
 
 @pytest.mark.parametrize("systolic, diastolic, expected_text", [
     (85, 55, "Low Blood Pressure"),

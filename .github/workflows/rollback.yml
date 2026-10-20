@@ -17,15 +17,15 @@ concurrency:
   group: production
   cancel-in-progress: false
 
+# AZURE_WEBAPP_NAME (variable) and AZURE_WEBAPP_PUBLISH_PROFILE (secret) come from the prod environment
 env:
   IMAGE_NAME: praveenps025/bpcalc
-  AZURE_WEBAPP_NAME: ca1
 
 jobs:
   rollback:
     runs-on: ubuntu-latest
     environment:
-      name: production
+      name: prod
       url: ${{ steps.deploy.outputs.webapp-url }}
     steps:
       - uses: actions/checkout@v4
@@ -66,7 +66,7 @@ jobs:
         id: deploy
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           images: index.docker.io/${{ env.IMAGE_NAME }}:${{ steps.target.outputs.version }}
 

@@ -1,4 +1,6 @@
 name: Build and Deploy - BP Calculator
+# commit SHA in the run list, so each run shows which change it deploys
+run-name: Deploy ${{ github.sha }}
 
 on:
   push:
@@ -94,6 +96,15 @@ jobs:
       # the "stable" tag always points at the last version that passed the live health check
       - name: Mark this version as stable
         run: docker buildx imagetools create -t ${{ env.IMAGE_NAME }}:stable ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # same short SHA as the "Version" label in the corner of the calculator page
+      - name: Show deployed version
+        run: |
+          {
+            echo "## Deployed"
+            echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
+            echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ---- automatic rollback: only if the deploy or the health check failed ----
 

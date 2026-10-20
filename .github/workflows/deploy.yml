@@ -12,7 +12,7 @@ concurrency:
   group: production
   cancel-in-progress: false
 
-# each GitHub environment (test, stage, prod) has its own
+# each GitHub environment (test, stage, production) has its own
 #   variable AZURE_WEBAPP_NAME and secret AZURE_WEBAPP_PUBLISH_PROFILE
 env:
   IMAGE_NAME: praveenps025/bpcalc
@@ -51,7 +51,7 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-  # the same image goes test -> stage -> prod; a failed health check stops the promotion
+  # the same image goes test -> stage -> production; a failed health check stops the promotion
   deploy-test:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -108,12 +108,12 @@ jobs:
             echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # a required reviewer on the prod environment makes this job wait for approval
+  # a required reviewer on the production environment makes this job wait for approval
   deploy-prod:
     needs: deploy-stage
     runs-on: ubuntu-latest
     environment:
-      name: prod
+      name: production
       url: ${{ steps.deploy.outputs.webapp-url }}
     steps:
       - uses: actions/checkout@v4
@@ -160,7 +160,7 @@ jobs:
       - name: Show deployed version
         run: |
           {
-            echo "## Deployed to prod"
+            echo "## Deployed to production"
             echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
             echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
           } >> "$GITHUB_STEP_SUMMARY"

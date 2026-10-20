@@ -83,6 +83,9 @@ jobs:
   deploy-stage:
     needs: deploy-test
     runs-on: ubuntu-latest
+    # write access only to publish the k6 report to the gh-pages branch
+    permissions:
+      contents: write
     environment:
       name: stage
       url: ${{ steps.deploy.outputs.webapp-url }}
@@ -106,6 +109,66 @@ jobs:
             echo "## Deployed to stage"
             echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
             echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # performance test; a missed threshold fails this job, so production is not deployed
+      - uses: grafana/setup-k6-action@v1
+
+      - name: k6 load test
+        id: k6
+        env:
+          BASE_URL: ${{ steps.deploy.outputs.webapp-url }}
+          # Grafana's HTML report of the run, uploaded below
+          K6_WEB_DASHBOARD: "true"
+          K6_WEB_DASHBOARD_EXPORT: k6-report.html
+        run: k6 run --summary-export=k6-summary.json ${{ env.APP_DIR }}/tests/performance/load-test.js
+
+      - name: Add k6 results to run summary
+        if: always() && (steps.k6.outcome == 'success' || steps.k6.outcome == 'failure')
+        run: |
+          jq -r '
+            "## k6 load test (stage): \(if "${{ steps.k6.outcome }}" == "success" then "passed" else "FAILED" end)",
+            "| Measure | Result | Limit |",
+            "|---|---|---|",
+            "| Requests | \(.metrics.http_reqs.count) | |",
+            "| p95 response time | \(.metrics.http_req_duration["p(95)"] | floor) ms | < 1000 ms |",
+            "| Failed requests | \(.metrics.http_req_failed.value * 100 | . * 100 | floor / 100)% | < 1% |",
+            "| Checks passed | \(.metrics.checks.value * 100 | . * 100 | floor / 100)% | > 99% |"
+          ' k6-summary.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload k6 results
+        if: always() && (steps.k6.outcome == 'success' || steps.k6.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: |
+            k6-summary.json
+            k6-report.html
+
+      # GitHub Pages: k6/latest/ is the newest report, k6/<commit>/ keeps each run's report
+      - name: Prepare k6 report for GitHub Pages
+        id: pages
+        if: always() && hashFiles('k6-report.html') != ''
+        run: |
+          mkdir -p "pages/k6/$GITHUB_SHA" pages/k6/latest
+          cp k6-report.html "pages/k6/$GITHUB_SHA/index.html"
+          cp k6-report.html pages/k6/latest/index.html
+          echo "url=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/k6" >> "$GITHUB_OUTPUT"
+
+      - name: Publish k6 report to GitHub Pages
+        if: always() && steps.pages.outcome == 'success'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: pages
+          keep_files: true
+          commit_message: "k6 report for ${{ github.sha }}"
+
+      - name: Link k6 report in run summary
+        if: always() && steps.pages.outcome == 'success'
+        run: |
+          {
+            echo "k6 report: ${{ steps.pages.outputs.url }}/$GITHUB_SHA/ (latest run: ${{ steps.pages.outputs.url }}/latest/)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # a required reviewer on the production environment makes this job wait for approval

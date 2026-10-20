@@ -53,10 +53,18 @@ def create_app(env_name=None):
 
     # commit SHA baked into the image at build time; the deploy health check uses it
     # to tell when the new version is live (not in the .NET app, see MIGRATION.md F7)
+    def app_version():
+        return os.environ.get("APP_VERSION", "dev")
+
     @app.after_request
     def add_version_header(response):
-        response.headers["X-App-Version"] = os.environ.get("APP_VERSION", "dev")
+        response.headers["X-App-Version"] = app_version()
         return response
+
+    # the same version, shown in a corner of the calculator page
+    @app.context_processor
+    def version_context():
+        return {"app_version": app_version()}
 
     return app
 

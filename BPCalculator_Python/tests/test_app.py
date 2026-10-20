@@ -73,14 +73,29 @@ def test_unhandled_exception_shows_error_page_in_production():
     assert "An error occurred while processing your request." in response.get_data(as_text=True)
 
 
-def test_version_header_defaults_to_dev(client, monkeypatch):
-    monkeypatch.delenv("APP_VERSION", raising=False)
+def test_version_header_defaults_to_dev(client):
     assert client.get("/").headers["X-App-Version"] == "dev"
 
 
-def test_version_header_shows_build_version(client, monkeypatch):
-    monkeypatch.setenv("APP_VERSION", "abc123")
+def test_version_header_shows_build_version(client):
+    client.application.config["APP_VERSION"] = "abc123"
     assert client.get("/Privacy").headers["X-App-Version"] == "abc123"
+
+
+def test_index_shows_dev_version_in_corner(client):
+    assert ">Version dev</small>" in client.get("/").get_data(as_text=True)
+
+
+def test_index_shows_short_commit_sha_in_corner(client):
+    sha = "4df177d1234567890abcdef1234567890abcdef1"
+    client.application.config["APP_VERSION"] = sha
+    html = client.get("/").get_data(as_text=True)
+    assert f'title="{sha}"' in html
+    assert ">Version 4df177d</small>" in html
+
+
+def test_privacy_page_has_no_version_label(client):
+    assert 'id="app-version"' not in client.get("/Privacy").get_data(as_text=True)
 
 
 

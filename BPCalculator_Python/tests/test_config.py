@@ -45,5 +45,9 @@ def test_production_has_a_secret_key():
     assert Config.SECRET_KEY
 
 
+def test_version_is_dev_when_not_set_by_pipeline():
+    assert Config.APP_VERSION == "dev"
+
+
 def test_testing_has_csrf_off():
     assert TestingConfig.WTF_CSRF_ENABLED is False

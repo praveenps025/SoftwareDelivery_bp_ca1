@@ -12,6 +12,8 @@ class Config:
     # key automatically; here we read it from the environment or generate one per process.
     SECRET_KEY = os.environ.get("SECRET_KEY") or os.urandom(32)
     WTF_CSRF_ENABLED = True
+    # commit SHA baked into the image by the pipeline; "dev" when run locally
+    APP_VERSION = os.environ.get("APP_VERSION", "dev")
 
 
 class DevelopmentConfig(Config):

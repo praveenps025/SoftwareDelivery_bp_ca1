@@ -39,7 +39,7 @@ The original .NET project is **unchanged** and still in `../BPCalculator`, so bo
 | F4 | Unhandled errors | Not logged by the template | Logged with stack trace and request id (`app.py:37-38`) | Small improvement. `_logger` was injected in C# but never used. |
 | F5 | HTML5 attributes on inputs | `type="number"` + `data-val-*` | Same, **plus** `min`, `max`, `required` | WTForms adds them automatically. jQuery Validation sets `novalidate` on the form, so users still see the same messages. |
 | F6 | Anti-forgery field name | `__RequestVerificationToken` | `csrf_token` | Framework naming. A POST without a valid token still gets **HTTP 400** in both. |
-| F7 | Version header | None | Every response has `X-App-Version` (commit SHA from the `APP_VERSION` env var, `dev` locally) (`app.py:54-59`) | The deploy pipeline uses it to confirm which version is live before marking it stable or after a rollback. |
+| F7 | Version header and label | None | Every response has `X-App-Version` (commit SHA from the `APP_VERSION` env var, read into config at `config.py:15-16`, `dev` locally) (`app.py:54-59`). The calculator page also shows `Version <short SHA>` in its bottom-right corner, with the full SHA on hover (`app.py:61-64`, `index.html:36`) | The deploy pipeline uses the header to confirm which version is live before marking it stable or after a rollback. The label lets a person check by eye that the latest change is deployed. |
 
 Everything else (URLs, form field names/ids, validation rules and messages, page markup, CSS, JS) was kept the same on purpose. Existing UI tests that use `id="BP_Systolic"` or `name="BP.Systolic"` will still work.
 
@@ -56,7 +56,7 @@ Everything else (URLs, form field names/ids, validation rules and messages, page
 | `BloodPressure.cs` | `bloodpressure.py` (domain), `forms.py` (validation) | Rewritten + **split** |
 | `appsettings.json` | `config.py` → `Config` | Rewritten |
 | `appsettings.Development.json` | `config.py` → `DevelopmentConfig` | Rewritten |
-| `Properties/launchSettings.json` | `app.py:57-59`, `config.py:35-37` | Rewritten |
+| `Properties/launchSettings.json` | `app.py:69-71`, `config.py:37-39` | Rewritten |
 | `Pages/_ViewImports.cshtml` | — | Removed: Jinja2 needs no imports / tag-helper registration |
 | `Pages/_ViewStart.cshtml` | `{% extends "base.html" %}` at the top of each template | Replaced |
 | `Pages/Index.cshtml.cs` | `pages.py:10-20`, `forms.py:38-49` | Rewritten |
@@ -172,7 +172,7 @@ public static IHostBuilder CreateHostBuilder(string[] args) =>
         .ConfigureWebHostDefaults(webBuilder => { webBuilder.UseStartup<Startup>(); });
 ```
 ```python
-# NEW  app.py:18-20 and 57-59
+# NEW  app.py:18-20 and 69-71
 def create_app(env_name=None):
     app = Flask(__name__)
     app.config.from_object(get_config(env_name))
@@ -201,6 +201,7 @@ For production, `waitress-serve --call app:create_app` calls the same factory, j
 | 46-49 | `endpoints.MapRazorPages();` | 41-42 | `app.register_blueprint(pages)` | Routes registered from `pages.py` |
 | (`_Layout.cshtml:46` `asp-append-version="true"`) | Tag helper appends `?v=<hash>` | 44-52 | `static_v()` context processor | Same cache-busting behaviour |
 | — | — | 54-59 | `after_request` adds `X-App-Version` | **New** (F7) |
+| — | — | 61-64 | `context_processor` passes `app_version` to templates | **New** (F7) |
 
 ```csharp
 // OLD  Startup.cs:29-50
@@ -316,7 +317,8 @@ Validation messages are identical to the original:
 | 25-27 | Submit button | 25-27 | identical | Unchanged |
 | 28 | `@if (ViewData.ModelState.IsValid)` | 28 | `{% if bp %}` | `bp` is only set when the form is valid |
 | 31 | `@Html.DisplayFor(model => model.BP.Category, ...)` | 30 | `{{ bp.category.value }}` | Shows the display name, e.g. "Ideal Blood Pressure" |
-| 38-40 | `@section Scripts { await Html.RenderPartialAsync("_ValidationScriptsPartial"); }` | 38-40 | `{% block scripts %}{% include "_validation_scripts.html" %}{% endblock %}` | Section/partial → block/include |
+| — | — | 36 | `<small id="app-version">Version {{ app_version[:7] }}</small>`, fixed to the bottom-right corner | **New** (F7) |
+| 38-40 | `@section Scripts { await Html.RenderPartialAsync("_ValidationScriptsPartial"); }` | 39-41 | `{% block scripts %}{% include "_validation_scripts.html" %}{% endblock %}` | Section/partial → block/include |
 
 ```html
 <!-- OLD  Index.cshtml:14-18, 28-33 -->
@@ -412,12 +414,13 @@ The markup is identical line for line (same line numbers 1-48). Only Razor-speci
 | `appsettings.json:4` | `"Default": "Information"` | `config.py:10` | `LOG_LEVEL = "INFO"` |
 | `appsettings.json:5-6` | `"Microsoft": "Warning"`, `"Microsoft.Hosting.Lifetime": "Information"` | — | Not needed: framework-specific categories |
 | `appsettings.json:9` | `"AllowedHosts": "*"` | — | Flask accepts all hosts by default (same behaviour) |
-| `appsettings.Development.json:4` | `"Default": "Debug"` | `config.py:20` | `LOG_LEVEL = "DEBUG"` |
-| `launchSettings.json:22` | `"applicationUrl": "http://localhost:5000"` | `app.py:59` | `.run(host="localhost", port=5000)` |
-| `launchSettings.json:24` | `"ASPNETCORE_ENVIRONMENT": "Development"` | `app.py:59`, `config.py:35-37` | `APP_ENV` (default `Development` for `python app.py`, `Production` otherwise) |
+| `appsettings.Development.json:4` | `"Default": "Debug"` | `config.py:22` | `LOG_LEVEL = "DEBUG"` |
+| `launchSettings.json:22` | `"applicationUrl": "http://localhost:5000"` | `app.py:71` | `.run(host="localhost", port=5000)` |
+| `launchSettings.json:24` | `"ASPNETCORE_ENVIRONMENT": "Development"` | `app.py:71`, `config.py:37-39` | `APP_ENV` (default `Development` for `python app.py`, `Production` otherwise) |
 | `launchSettings.json:2-16` | IIS Express profile (port 53135) | — | **Removed**: IIS Express is Windows/.NET only |
 | (implicit Data Protection keys) | auto-generated anti-forgery key | `config.py:11-14` | `SECRET_KEY` from env, or random per process |
-| — | — | `config.py:23-25` | **New** `TestingConfig` (CSRF off for tests) |
+| — | — | `config.py:15-16` | **New** `APP_VERSION` from env, `dev` if not set (F7) |
+| — | — | `config.py:25-27` | **New** `TestingConfig` (CSRF off for tests) |
 
 ### 3.12 `BPCalculator.csproj` + `BPCalculator.sln` → `requirements*.txt`
 

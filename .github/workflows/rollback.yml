@@ -17,7 +17,7 @@ concurrency:
   group: production
   cancel-in-progress: false
 
-# AZURE_WEBAPP_NAME (variable) and AZURE_WEBAPP_PUBLISH_PROFILE (secret) come from the prod environment
+# AZURE_WEBAPP_NAME (variable) and AZURE_WEBAPP_PUBLISH_PROFILE (secret) come from the production environment
 env:
   IMAGE_NAME: praveenps025/bpcalc
 
@@ -25,7 +25,7 @@ jobs:
   rollback:
     runs-on: ubuntu-latest
     environment:
-      name: prod
+      name: production
       url: ${{ steps.deploy.outputs.webapp-url }}
     steps:
       - uses: actions/checkout@v4

@@ -12,9 +12,10 @@ concurrency:
   group: production
   cancel-in-progress: false
 
+# each GitHub environment (test, stage, prod) has its own
+#   variable AZURE_WEBAPP_NAME and secret AZURE_WEBAPP_PUBLISH_PROFILE
 env:
   IMAGE_NAME: praveenps025/bpcalc
-  AZURE_WEBAPP_NAME: ca1
   APP_DIR: BPCalculator_Python
 
 jobs:
@@ -50,11 +51,69 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-  deploy:
+  # the same image goes test -> stage -> prod; a failed health check stops the promotion
+  deploy-test:
     needs: build-and-push
     runs-on: ubuntu-latest
     environment:
-      name: production
+      name: test
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Azure Web App
+        id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: index.docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Health check
+        run: bash .github/scripts/health-check.sh "${{ steps.deploy.outputs.webapp-url }}" "${{ github.sha }}"
+
+      - name: Show deployed version
+        run: |
+          {
+            echo "## Deployed to test"
+            echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
+            echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-stage:
+    needs: deploy-test
+    runs-on: ubuntu-latest
+    environment:
+      name: stage
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Azure Web App
+        id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: index.docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Health check
+        run: bash .github/scripts/health-check.sh "${{ steps.deploy.outputs.webapp-url }}" "${{ github.sha }}"
+
+      - name: Show deployed version
+        run: |
+          {
+            echo "## Deployed to stage"
+            echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
+            echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # a required reviewer on the prod environment makes this job wait for approval
+  deploy-prod:
+    needs: deploy-stage
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
       url: ${{ steps.deploy.outputs.webapp-url }}
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +127,7 @@ jobs:
         id: deploy
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           # the commit-SHA tag makes App Service pull exactly the image just built
           images: index.docker.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -101,7 +160,7 @@ jobs:
       - name: Show deployed version
         run: |
           {
-            echo "## Deployed"
+            echo "## Deployed to prod"
             echo "Version: \`${GITHUB_SHA::7}\` (full SHA: \`$GITHUB_SHA\`)"
             echo "Site: ${{ steps.deploy.outputs.webapp-url }}"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -126,7 +185,7 @@ jobs:
         if: failure() && steps.stable.outcome == 'success'
         uses: azure/webapps-deploy@v3
         with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           images: index.docker.io/${{ env.IMAGE_NAME }}:${{ steps.stable.outputs.version }}
 

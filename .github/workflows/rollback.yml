@@ -82,3 +82,23 @@ jobs:
       # otherwise the next deploy would keep the bad version as "previous"
       - name: Mark this version as stable
         run: docker buildx imagetools create -t "$IMAGE_NAME:stable" "$IMAGE_NAME:${{ steps.target.outputs.version }}"
+
+      - name: Slack - rollback result
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+          VERSION: ${{ steps.target.outputs.version }}
+          APP_URL: ${{ steps.deploy.outputs.webapp-url }}
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "$JOB_STATUS" = "success" ]; then
+            title="⚠️ Production rolled back to ${VERSION::7}"
+            message="Manual rollback by *$GITHUB_ACTOR*: production is running \`${VERSION::7}\` and passed the health check."
+          else
+            title="❌ Rollback failed"
+            message="Manual rollback by *$GITHUB_ACTOR* to \`${VERSION:-unknown}\` did not finish. Check the run."
+          fi
+          bash .github/scripts/slack-notify.sh "$title" "$message" \
+            "Open app=$APP_URL" \
+            "Rollback run=$run_url"

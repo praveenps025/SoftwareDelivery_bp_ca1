@@ -89,6 +89,12 @@ jobs:
     environment:
       name: stage
       url: ${{ steps.deploy.outputs.webapp-url }}
+    # k6 results and report link for the Slack messages
+    outputs:
+      k6-result: ${{ steps.k6.outcome }}
+      k6-p95: ${{ steps.k6-results.outputs.p95 }}
+      k6-failed: ${{ steps.k6-results.outputs.failed }}
+      k6-report: ${{ steps.pages.outputs.url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -136,6 +142,15 @@ jobs:
             "| Checks passed | \(.metrics.checks.value * 100 | . * 100 | floor / 100)% | > 99% |"
           ' k6-summary.json >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Keep k6 results for Slack
+        id: k6-results
+        if: always() && (steps.k6.outcome == 'success' || steps.k6.outcome == 'failure')
+        run: |
+          jq -r '
+            "p95=\(.metrics.http_req_duration["p(95)"] | floor)",
+            "failed=\(.metrics.http_req_failed.value * 100 | . * 100 | floor / 100)"
+          ' k6-summary.json >> "$GITHUB_OUTPUT"
+
       - name: Upload k6 results
         if: always() && (steps.k6.outcome == 'success' || steps.k6.outcome == 'failure')
         uses: actions/upload-artifact@v4
@@ -171,6 +186,35 @@ jobs:
             echo "k6 report: ${{ steps.pages.outputs.url }}/$GITHUB_SHA/ (latest run: ${{ steps.pages.outputs.url }}/latest/)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # tells Slack that stage passed and production is waiting for approval
+  notify-approval:
+    needs: deploy-stage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Slack - waiting for approval
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          K6_P95: ${{ needs.deploy-stage.outputs.k6-p95 }}
+          K6_FAILED: ${{ needs.deploy-stage.outputs.k6-failed }}
+          K6_REPORT: ${{ needs.deploy-stage.outputs.k6-report }}
+        run: |
+          subject=$(git log -1 --format=%s | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          bash .github/scripts/slack-notify.sh \
+            "⏳ BP Calculator ${GITHUB_SHA::7} is waiting for approval to go to production" \
+            "*Version:* \`${GITHUB_SHA::7}\` - $subject
+          *Pushed by:* $GITHUB_ACTOR
+
+          ✅ Build and push
+          ✅ Test - health check passed
+          ✅ Stage - health check passed
+          ✅ k6 - p95 ${K6_P95} ms (limit 1000 ms), failed requests ${K6_FAILED}% (limit 1%)
+          ⏳ Production - waiting for approval" \
+            "Review and approve=$run_url" \
+            "k6 report=${K6_REPORT:+$K6_REPORT/$GITHUB_SHA/}"
+
   # a required reviewer on the production environment makes this job wait for approval
   deploy-prod:
     needs: deploy-stage
@@ -178,6 +222,11 @@ jobs:
     environment:
       name: production
       url: ${{ steps.deploy.outputs.webapp-url }}
+    # site and automatic rollback result for the Slack message
+    outputs:
+      url: ${{ steps.deploy.outputs.webapp-url }}
+      rollback-result: ${{ steps.rollback.outcome }}
+      rollback-version: ${{ steps.stable.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -260,3 +309,88 @@ jobs:
             echo "## Deployment rolled back"
             echo "Version \`${{ github.sha }}\` failed, so production was rolled back to the last stable version \`${{ steps.stable.outputs.version }}\`."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # final Slack message: live, rolled back, or the stage where the deploy stopped
+  notify-result:
+    needs: [ci, build-and-push, deploy-test, deploy-stage, deploy-prod]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Slack - deploy result
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          CI_RESULT: ${{ needs.ci.result }}
+          BUILD_RESULT: ${{ needs.build-and-push.result }}
+          TEST_RESULT: ${{ needs.deploy-test.result }}
+          STAGE_RESULT: ${{ needs.deploy-stage.result }}
+          PROD_RESULT: ${{ needs.deploy-prod.result }}
+          K6_RESULT: ${{ needs.deploy-stage.outputs.k6-result }}
+          K6_P95: ${{ needs.deploy-stage.outputs.k6-p95 }}
+          K6_FAILED: ${{ needs.deploy-stage.outputs.k6-failed }}
+          K6_REPORT: ${{ needs.deploy-stage.outputs.k6-report }}
+          PROD_URL: ${{ needs.deploy-prod.outputs.url }}
+          ROLLBACK_RESULT: ${{ needs.deploy-prod.outputs.rollback-result }}
+          ROLLBACK_VERSION: ${{ needs.deploy-prod.outputs.rollback-version }}
+        run: |
+          icon() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              cancelled) echo "⛔" ;;
+              *) echo "⏭️" ;;
+            esac
+          }
+          version="${GITHUB_SHA::7}"
+          subject=$(git log -1 --format=%s | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          stages="$(icon "$CI_RESULT") CI checks
+          $(icon "$BUILD_RESULT") Build and push
+          $(icon "$TEST_RESULT") Test
+          $(icon "$STAGE_RESULT") Stage"
+          if [ -n "$K6_RESULT" ]; then
+            stages+="
+          $(icon "$K6_RESULT") k6 - p95 ${K6_P95:-?} ms (limit 1000 ms), failed requests ${K6_FAILED:-?}% (limit 1%)"
+          fi
+          stages+="
+          $(icon "$PROD_RESULT") Production"
+
+          # first stage that did not succeed
+          stopped=""
+          for stage in "CI checks:$CI_RESULT" "Build and push:$BUILD_RESULT" "Test:$TEST_RESULT" \
+                       "Stage:$STAGE_RESULT" "Production:$PROD_RESULT"; do
+            if [ "${stage#*:}" != "success" ]; then
+              stopped="${stage%:*}"
+              break
+            fi
+          done
+          if [ "$stopped" = "Stage" ] && [ "$K6_RESULT" = "failure" ]; then
+            stopped="Stage (k6 load test)"
+          fi
+
+          if [ -z "$stopped" ]; then
+            title="✅ BP Calculator $version is live in production"
+          elif [ "$ROLLBACK_RESULT" = "success" ]; then
+            title="⚠️ BP Calculator $version failed in production, rolled back to ${ROLLBACK_VERSION::7}"
+          else
+            title="❌ BP Calculator $version deploy stopped at: $stopped"
+            stages+="
+
+          Production was not changed."
+          fi
+
+          app_url=""
+          if [ "$PROD_RESULT" = "success" ] || [ "$ROLLBACK_RESULT" = "success" ]; then
+            app_url="$PROD_URL"
+          fi
+
+          bash .github/scripts/slack-notify.sh "$title" \
+            "*Version:* \`$version\` - $subject
+          *Pushed by:* $GITHUB_ACTOR
+
+          $stages" \
+            "Open app=$app_url" \
+            "k6 report=${K6_REPORT:+$K6_REPORT/$GITHUB_SHA/}" \
+            "Pipeline run=$run_url"
